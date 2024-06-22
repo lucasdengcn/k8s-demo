@@ -1,0 +1,289 @@
+##
+## https://kubernetes.io/docs/tasks/inject-data-application/define-environment-variable-container/
+## 
+## https://www.baeldung.com/ops/kubernetes-pod-vs-deployment
+# https://kubernetes.io/zh-cn/docs/concepts/services-networking/network-policies/
+#
+# 1. create app configuration, app container deployment, app sidecar deployment, service, hpa, probes, ingress
+# 2. network policy to control ingress to app service
+# 3. token policy to authentication access to app service
+#
+
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zt-nginx-svc-account
+
+---
+
+#
+# JWT Token:
+# expire time: None by default
+#
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zt-nginx-secret
+  annotations:
+    kubernetes.io/service-account.name: zt-nginx-svc-account
+type: kubernetes.io/service-account-token
+data:
+  extra: YmFyCg==
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zt-nginx-configmap
+data:
+  index.html: |
+    <html>
+      <body>
+        <h1>Welcome to My Website in Blue!</h1>
+      </body>
+    </html>
+  zt.conf: |
+    server {
+      listen       80;
+      server_name  zt.localdev.me;
+
+      location / {
+        root   /usr/share/nginx/html;
+        index  index.html index.htm;
+      }
+
+      error_page   500 502 503 504  /50x.html;
+      location = /50x.html {
+        root   /usr/share/nginx/html;
+      }
+    }
+  # 类属性键；每一个键都映射到一个简单的值
+  player_initial_lives: "3"
+  ui_properties_file_name: "user-interface.properties"
+
+  # 类文件键
+  game.properties: |
+    enemy.types=aliens,monsters
+    player.maximum-lives=5    
+  user-interface.properties: |
+    color.good=purple
+    color.bad=yellow
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zt-app-configmap
+data:
+  PG_PASS: bXlzZWNyZXRwYXNzd29yZA==
+  PG_HOST: localhost:5379
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zt-nginx-deployment
+  labels:
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zt-nginx-pod
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: zt-nginx-pod
+        version: v1
+    spec:
+      serviceAccountName: zt-nginx-svc-account
+      # sidecar
+      # initContainers:
+      #   - name: logshipper
+      #     image: m.daocloud.io/docker.io/alpine:latest
+      #     restartPolicy: Always
+      #     #command: ['sh', '-c', 'tail /opt/logs.txt']
+      #     volumeMounts:
+      #       - name: data
+      #         mountPath: /opt
+      # main
+      containers:
+      - image: nginx:1.10 # Edit this for your reponame
+        #imagePullPolicy: Never
+        env:
+          - name: NGINX_HOST
+            value: zt.localdev.me
+          # 定义环境变量
+          - name: PLAYER_INITIAL_LIVES # 请注意这里和 ConfigMap 中的键名是不一样的
+            valueFrom:
+              configMapKeyRef:
+                name: zt-nginx-configmap           # 这个值来自 ConfigMap
+                key: player_initial_lives # 需要取值的键
+          - name: UI_PROPERTIES_FILE_NAME
+            valueFrom:
+              configMapKeyRef:
+                name: zt-nginx-configmap
+                key: ui_properties_file_name
+        envFrom:
+          - configMapRef:
+              name: zt-app-configmap
+        #    
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 50m
+            memory: 50Mi
+        name: zt-nginx-pod
+        #restartPolicy: Never
+        ports:
+        - containerPort: 80
+        - name: liveness-port
+          containerPort: 80
+        #
+        volumeMounts:
+        - name: html-volume
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        #
+        livenessProbe:
+          httpGet:
+            path: /
+            port: liveness-port
+            httpHeaders:
+            - name: Custom-Header
+              value: Awesome
+          initialDelaySeconds: 3
+          periodSeconds: 3
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: liveness-port
+            httpHeaders:
+            - name: Custom-Header
+              value: Awesome
+          initialDelaySeconds: 3
+          periodSeconds: 3
+          timeoutSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /
+            port: liveness-port
+          failureThreshold: 1
+          periodSeconds: 10
+      #  
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: html-volume
+        # Use either ConfigMap or PersistentVolume
+        configMap:
+          name: zt-nginx-configmap
+          items:
+          - key: index.html
+            path: index.html
+            # persistentVolumeClaim:
+            #   claimName: html-pvc
+      - name: nginx-config
+        configMap:
+          name: zt-nginx-configmap
+          items:
+          - key: zt.conf
+            path: default.conf
+      - name: access-token
+        projected:
+          sources:
+          # 要为某 Pod 提供一个受众为 vault 并且有效期限为 2 小时的令牌 ??
+          - serviceAccountToken:
+              path: access-token
+              expirationSeconds: 600
+              audience: vault
+      - name: config
+        configMap:
+          # 提供你想要挂载的 ConfigMap 的名字
+          name: zt-nginx-configmap
+          # 来自 ConfigMap 的一组键，将被创建为文件
+          items:
+          - key: "game.properties"
+            path: "game.properties"
+          - key: "user-interface.properties"
+            path: "user-interface.properties"
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: zt-nginx-svc
+    version: v1
+  name: zt-nginx-svc
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    app: zt-nginx-pod
+  type: ClusterIP
+
+---
+# https://docs.openshift.com/container-platform/4.10/nodes/pods/nodes-pods-autoscaling.html
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-zt-nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: zt-nginx-deployment
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleDown: 
+      policies: 
+      - type: Pods 
+        value: 4 
+        periodSeconds: 60 
+      - type: Percent
+        value: 10 
+        periodSeconds: 60
+      selectPolicy: Min 
+      stabilizationWindowSeconds: 300 
+    scaleUp: 
+      policies:
+      - type: Pods
+        value: 5 
+        periodSeconds: 70
+      - type: Percent
+        value: 12 
+        periodSeconds: 80
+      selectPolicy: Max
+      stabilizationWindowSeconds: 0
+
