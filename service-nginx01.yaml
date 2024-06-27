@@ -47,12 +47,16 @@ data:
     </html>
   zt.conf: |
     server {
-      listen       80;
-      server_name  zt.localdev.me;
+      listen       81;
+      server_name  localhost;
 
       location / {
         root   /usr/share/nginx/html;
         index  index.html index.htm;
+      }
+
+      location /health {
+        return 200;
       }
 
       error_page   500 502 503 504  /50x.html;
@@ -60,6 +64,48 @@ data:
         root   /usr/share/nginx/html;
       }
     }
+
+  sidecar.conf: |
+    user  nginx;
+    worker_processes  1;
+
+    error_log  /var/log/nginx/error.log warn;
+    pid        /var/run/nginx.pid;
+
+
+    events {
+        worker_connections  1024;
+    }
+
+
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+
+        log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                          '$status $body_bytes_sent "$http_referer" '
+                          '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log  /var/log/nginx/access.log  main;
+
+        sendfile        on;
+        #tcp_nopush     on;
+
+        keepalive_timeout  65;
+
+        #gzip  on;
+
+        #include /etc/nginx/conf.d/*.conf;
+        server {
+          listen       80;
+          server_name  zt.localdev.me;
+
+          location / {
+            proxy_pass http://localhost:81;
+          }
+        }
+    }
+
   # 类属性键；每一个键都映射到一个简单的值
   player_initial_lives: "3"
   ui_properties_file_name: "user-interface.properties"
@@ -104,14 +150,25 @@ spec:
     spec:
       serviceAccountName: zt-nginx-svc-account
       # sidecar
-      # initContainers:
-      #   - name: logshipper
-      #     image: m.daocloud.io/docker.io/alpine:latest
-      #     restartPolicy: Always
-      #     #command: ['sh', '-c', 'tail /opt/logs.txt']
-      #     volumeMounts:
-      #       - name: data
-      #         mountPath: /opt
+      initContainers:
+        - name: appdoor
+          image: nginx:1.10
+          restartPolicy: Always
+          #command: ['sh', '-c', 'tail /opt/logs.txt']
+          volumeMounts:
+            - name: data
+              mountPath: /opt
+            - name: sidecar-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          #    
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+            requests:
+              cpu: 50m
+              memory: 50Mi
       # main
       containers:
       - image: nginx:1.10 # Edit this for your reponame
@@ -119,17 +176,6 @@ spec:
         env:
           - name: NGINX_HOST
             value: zt.localdev.me
-          # 定义环境变量
-          - name: PLAYER_INITIAL_LIVES # 请注意这里和 ConfigMap 中的键名是不一样的
-            valueFrom:
-              configMapKeyRef:
-                name: zt-nginx-configmap           # 这个值来自 ConfigMap
-                key: player_initial_lives # 需要取值的键
-          - name: UI_PROPERTIES_FILE_NAME
-            valueFrom:
-              configMapKeyRef:
-                name: zt-nginx-configmap
-                key: ui_properties_file_name
         envFrom:
           - configMapRef:
               name: zt-app-configmap
@@ -144,9 +190,9 @@ spec:
         name: zt-nginx-pod
         #restartPolicy: Never
         ports:
-        - containerPort: 80
+        - containerPort: 81
         - name: liveness-port
-          containerPort: 80
+          containerPort: 81
         #
         volumeMounts:
         - name: html-volume
@@ -156,7 +202,7 @@ spec:
         #
         livenessProbe:
           httpGet:
-            path: /
+            path: /health
             port: liveness-port
             httpHeaders:
             - name: Custom-Header
@@ -167,7 +213,7 @@ spec:
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /
+            path: /health
             port: liveness-port
             httpHeaders:
             - name: Custom-Header
@@ -178,7 +224,7 @@ spec:
           failureThreshold: 3
         startupProbe:
           httpGet:
-            path: /
+            path: /health
             port: liveness-port
           failureThreshold: 1
           periodSeconds: 10
@@ -201,6 +247,12 @@ spec:
           items:
           - key: zt.conf
             path: default.conf
+      - name: sidecar-config
+        configMap:
+          name: zt-nginx-configmap
+          items:
+          - key: sidecar.conf
+            path: nginx.conf
       - name: access-token
         projected:
           sources:
@@ -209,16 +261,6 @@ spec:
               path: access-token
               expirationSeconds: 600
               audience: vault
-      - name: config
-        configMap:
-          # 提供你想要挂载的 ConfigMap 的名字
-          name: zt-nginx-configmap
-          # 来自 ConfigMap 的一组键，将被创建为文件
-          items:
-          - key: "game.properties"
-            path: "game.properties"
-          - key: "user-interface.properties"
-            path: "user-interface.properties"
 
 ---
 
