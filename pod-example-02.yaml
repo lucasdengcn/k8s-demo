@@ -1,0 +1,38 @@
+#
+# demo on podAntiAffinity, resources
+#
+apiVersion: apps/v1  
+kind: Deployment  
+metadata:  
+  name: my-app-deployment  
+spec:  
+  replicas: 2  
+  selector:  
+    matchLabels:  
+      app: my-app  
+  template:  
+    metadata:  
+      labels:  
+        app: my-app  
+    spec:  
+      containers:  
+      - name: my-app-container  
+        image: my-app-image:latest  
+        # 这里可以添加资源请求和限制等配置  
+        resources:  
+          requests:
+            memory: "64Mi"  
+            cpu: "250m"  
+          limits:  
+            memory: "128Mi"  
+            cpu: "500m" 
+      affinity:  
+        podAntiAffinity:  
+          requiredDuringSchedulingIgnoredDuringExecution:  
+          - labelSelector:  
+              matchExpressions:  
+              - key: app  
+                operator: In  
+                values:  
+                - my-app  
+            topologyKey: "kubernetes.io/hostname"

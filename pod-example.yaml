@@ -1,0 +1,44 @@
+#
+# demo on nodeAffinity, resources, tolerations
+#
+apiVersion: v1  
+kind: Pod  
+metadata:  
+  name: nginx-pod-with-resources  
+  labels:  
+    app: nginx  
+spec:  
+  containers:  
+  - name: nginx  
+    image: nginx:1.17.10  
+    ports:  
+    - containerPort: 80  
+    resources:  
+      requests:  
+        memory: "64Mi"  
+        cpu: "250m"  
+      limits:  
+        memory: "128Mi"  
+        cpu: "500m"  
+  affinity:  
+    nodeAffinity:  
+      requiredDuringSchedulingIgnoredDuringExecution:  
+        nodeSelectorTerms:  
+        - matchExpressions:  
+          - key: disktype  
+            operator: In  
+            values:  
+            - ssd  
+      preferredDuringSchedulingIgnoredDuringExecution:  
+      - weight: 1  
+        preference:  
+          matchExpressions:  
+          - key: region  
+            operator: In  
+            values:  
+            - us-west-1  
+  tolerations:  
+  - key: "key1"  
+    operator: "Equal"  
+    value: "value1"  
+    effect: "NoSchedule"
