@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1  
+kind: Ingress  
+metadata:  
+  namespace: myapp-ns
+  name: myapp-canary-ingress  
+  annotations:  
+    nginx.ingress.kubernetes.io/enable-access-log: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/canary: "true"  
+    nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"  
+    nginx.ingress.kubernetes.io/canary-by-header-value: "v1"  
+    # 如果需要基于权重的路由，可以使用 canary-weight 注解  
+    # nginx.ingress.kubernetes.io/canary-weight: "20"  
+  labels:
+    app: myapp-canary-ingress
+spec:
+  ingressClassName: nginx
+  rules:  
+  - host: myapp.localdev.me  
+    http:  
+      paths:  
+      - path: /  
+        pathType: Prefix  
+        backend:  
+          service:  
+            name: myapp-canary-service
+            port:  
+              number: 80  
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: myapp-ns
+  name: myapp-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/enable-access-log: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+  labels:
+    app: myapp-stable-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: myapp.localdev.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: myapp-stable-service
+            port:
+              number: 80

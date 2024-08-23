@@ -1,0 +1,88 @@
+# create a namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: myapp-ns
+
+---
+
+# create a service account
+apiVersion: /v1
+kind: ServiceAccount
+metadata:
+  name: myapp-serviceaccount
+  namespace: myapp-ns
+
+
+---
+# create a deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-stable-deployment
+  namespace: myapp-ns
+  labels:
+    version: stable
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: myapp-stable-pod
+      version: stable
+  template:
+    metadata:
+      namespace: myapp-ns
+      labels:
+        app: myapp-stable-pod
+        version: stable
+    spec:
+      serviceAccountName: myapp-serviceaccount
+      containers:
+      - name: myapp-stable-pod
+        image: registry.cn-hangzhou.aliyuncs.com/ymmirror/e2e-test-echo:v1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "128Mi"
+        env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+
+---
+# create a service
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp-stable-service
+  namespace: myapp-ns
+  labels:
+    app: myapp-stable-service
+    version: stable
+spec:
+  selector:
+    app: myapp-stable-pod
+    version: stable
+  ports:
+   - protocol: TCP
+     port: 80
+     targetPort: 80
